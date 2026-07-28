@@ -32,10 +32,29 @@ Batch convert `.webp` images to `.jpg` format.
 > to keep the conversion visually lossless. You can adjust the quality via the
 > `--quality` argument.
 
+### `download_xiaohongshu_images.py`
+
+Download images from a Xiaohongshu (小红书) note.
+
+- Accepts a trimmed short link (`xhslink.cn`), a sentence containing a short link,
+  or a full `xiaohongshu.com` note URL.
+- Resolves short links automatically and extracts the note id from the page.
+- Downloads each image in the note to a local folder.
+- Detects the real image format (`.webp`, `.jpg`, `.png`, etc.) from the HTTP
+  `Content-Type` header and uses the correct file extension.
+- Avoids overwriting existing files by appending a counter to the filename.
+- Use `--original` to attempt downloading the unprocessed original image.
+
+> **Note:** Xiaohongshu image URLs are signed and may expire quickly. If a
+> download fails, rerun the script with a fresh link. `--original` may fail when
+> the CDN rejects the unsigned URL; the script falls back to the signed URL in
+> that case.
+
 ## Environment
 
 - Python 3.9+
 - [Pillow](https://python-pillow.org/)
+- [requests](https://requests.readthedocs.io/)
 
 ## Setup
 
@@ -111,6 +130,36 @@ python convert_webp_to_jpg.py /path/to/images --no-recursive
 python convert_webp_to_jpg.py /path/to/images --quality 100
 ```
 
+### Download images from a Xiaohongshu note
+
+```bash
+python download_xiaohongshu_images.py "http://xhslink.cn/o/xxxxxx"
+```
+
+### Download from pasted text containing a short link
+
+```bash
+python download_xiaohongshu_images.py "复制这段话 打开小红书 http://xhslink.cn/o/xxxxxx 查看笔记~"
+```
+
+### Download from a full xiaohongshu.com URL
+
+```bash
+python download_xiaohongshu_images.py "https://www.xiaohongshu.com/explore/xxxxx?..."
+```
+
+### Specify output directory
+
+```bash
+python download_xiaohongshu_images.py "http://xhslink.cn/o/xxxxxx" -o ~/Pictures/xhs
+```
+
+### Try to download original unprocessed images
+
+```bash
+python download_xiaohongshu_images.py "http://xhslink.cn/o/xxxxxx" --original
+```
+
 ## Examples
 
 ```bash
@@ -129,6 +178,10 @@ python convert_webp_to_jpg.py ~/Pictures/photo.webp
 # Batch convert a folder
 python convert_webp_to_jpg.py ~/Pictures/vacation --quality 95
 # Output: creates .jpg files next to each .webp file
+
+# Download Xiaohongshu note images
+python download_xiaohongshu_images.py "http://xhslink.cn/o/xxxxxx" -o ~/Pictures/xhs
+# Output: creates ~/Pictures/xhs/<note_id>_001.webp, ...
 ```
 
 ## License
