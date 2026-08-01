@@ -50,6 +50,25 @@ Download images from a Xiaohongshu (小红书) note.
 > the CDN rejects the unsigned URL; the script falls back to the signed URL in
 > that case.
 
+### `download_douyin_images.py`
+
+Download images from a Douyin (抖音) note/image work.
+
+- Accepts a `v.douyin.com` short link, pasted share text containing a short link,
+  or a full `www.douyin.com/note/<id>` URL.
+- Resolves short links and normalizes all inputs to Douyin's mobile share
+  endpoint, which avoids the signature challenge on the desktop site.
+- Downloads each image in the note to a local folder.
+- Detects the real image format (`.webp`, `.jpg`, `.png`, etc.) from the HTTP
+  `Content-Type` header and uses the correct file extension.
+- Avoids overwriting existing files by appending a counter to the filename.
+- Use `--original` to attempt downloading the unsigned original image.
+
+> **Note:** Douyin image URLs are signed and expire quickly. `--original` may
+> fail when the CDN rejects the unsigned URL; the script falls back to the
+> signed URL in that case. Video-only works (`/video/<id>`) may not provide
+> downloadable images through this endpoint.
+
 ## Environment
 
 - Python 3.9+
@@ -160,6 +179,36 @@ python download_xiaohongshu_images.py "http://xhslink.cn/o/xxxxxx" -o ~/Pictures
 python download_xiaohongshu_images.py "http://xhslink.cn/o/xxxxxx" --original
 ```
 
+### Download images from a Douyin note
+
+```bash
+python download_douyin_images.py "https://v.douyin.com/xxxxx"
+```
+
+### Download from pasted text containing a short link
+
+```bash
+python download_douyin_images.py "6.46 复制打开抖音，看看【博主的图文作品】... https://v.douyin.com/xxxxx/ :6pm"
+```
+
+### Download from a full douyin.com URL
+
+```bash
+python download_douyin_images.py "https://www.douyin.com/note/xxxxx"
+```
+
+### Specify output directory for Douyin images
+
+```bash
+python download_douyin_images.py "https://v.douyin.com/xxxxx" -o ~/Pictures/douyin
+```
+
+### Try to download original unprocessed Douyin images
+
+```bash
+python download_douyin_images.py "https://v.douyin.com/xxxxx" --original
+```
+
 ## Examples
 
 ```bash
@@ -182,6 +231,10 @@ python convert_webp_to_jpg.py ~/Pictures/vacation --quality 95
 # Download Xiaohongshu note images
 python download_xiaohongshu_images.py "http://xhslink.cn/o/xxxxxx" -o ~/Pictures/xhs
 # Output: creates ~/Pictures/xhs/<note_id>_001.webp, ...
+
+# Download Douyin note images
+python download_douyin_images.py "https://v.douyin.com/xxxxx" -o ~/Pictures/douyin
+# Output: creates ~/Pictures/douyin/<work_id>_001.webp, ...
 ```
 
 ## License
