@@ -54,8 +54,10 @@ Download images from a Xiaohongshu (小红书) note.
 
 Download images from a Douyin (抖音) note/image work.
 
-- Accepts a `v.douyin.com` short link, pasted share text containing a short link,
-  or a full `www.douyin.com/note/<id>` URL.
+- Accepts a `https://v.douyin.com` short link, pasted share text containing a
+  short link, a full `www.douyin.com/note/<id>` URL, or a `/video/<id>` URL.
+- The URL must include the `https://` scheme; bare `v.douyin.com/xxxxx` text is
+  not extracted.
 - Resolves short links and normalizes all inputs to Douyin's mobile share
   endpoint, which avoids the signature challenge on the desktop site.
 - Downloads each image in the note to a local folder.
@@ -196,6 +198,15 @@ python download_douyin_images.py "6.46 复制打开抖音，看看【博主的�
 ```bash
 python download_douyin_images.py "https://www.douyin.com/note/xxxxx"
 ```
+
+### Download from a douyin.com video URL
+
+```bash
+python download_douyin_images.py "https://www.douyin.com/video/xxxxx"
+```
+
+> Video-only works usually do not contain downloadable images through this
+> endpoint and will exit with an error.
 
 ### Specify output directory for Douyin images
 
