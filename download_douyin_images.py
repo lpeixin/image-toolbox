@@ -359,17 +359,17 @@ def main() -> int:
         router_data = parse_router_data(html)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 0
+        return 1
 
     try:
         image_urls = extract_image_urls(router_data)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 0
+        return 1
 
     if not image_urls:
         print("Warning: No images found in the work.", file=sys.stderr)
-        return 0
+        return 1
 
     print(f"Found {len(image_urls)} image(s).")
 
