@@ -189,6 +189,10 @@ converted_images/
 *.converted.png
 *.converted.webp
 
+# Platform downloader output directories (generated at runtime)
+xiaohongshu_downloads/
+douyin_downloads/
+
 # Secrets / credentials
 *.pem
 *.key
