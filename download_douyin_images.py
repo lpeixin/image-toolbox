@@ -8,15 +8,21 @@ a v.douyin.com short link, or an arbitrary string that contains one of
 those links. The script resolves short links, parses the work page,
 extracts the image list, and downloads the images to a local folder.
 
-For image/note works, the page data is served through the mobile share
-endpoint (iesdouyin.com) which does not require executing Douyin's
-signature challenge.
+For image/note works, Douyin now loads the image list client-side through a
+signed API rather than embedding it in the page HTML. The script first tries
+to read the data straight from the share page, then falls back to rendering
+the page in a headless Chromium browser to obtain the image URLs.
 """
 
 import argparse
+import html
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlparse
@@ -43,6 +49,23 @@ HEADERS = {
 IMAGE_DOMAINS = (
     "douyinpic.com",
     "douyincdn.com",
+)
+
+# Candidate locations/names for a Chromium-based browser, used as a fallback
+# to render the share page (Douyin now loads note images client-side via a
+# signed API, so plain HTTP no longer exposes them).
+BROWSER_CANDIDATES = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "microsoft-edge",
 )
 
 
@@ -81,6 +104,14 @@ def parse_args() -> argparse.Namespace:
         metavar="SEC",
         help="HTTP request timeout in seconds. Default: 30",
     )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help=(
+            "Skip the headless-browser fallback. Use this when Chrome/Chromium "
+            "is unavailable; image extraction will rely solely on the page HTML."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -88,7 +119,14 @@ def extract_urls(text: str) -> list[str]:
     """Extract URLs from arbitrary user pasted text."""
     # Match http:// or https:// URLs, stopping at common punctuation/delimiters.
     pattern = re.compile(r"https?://[^\s<>\u4e00-\u9fff\"'，。、；：？！]+")
-    return pattern.findall(text)
+    urls = []
+    for raw in pattern.findall(text):
+        # Strip trailing punctuation that commonly follows a pasted link
+        # (parentheses, commas, periods, a trailing colon, etc.).
+        url = raw.rstrip("),.;:!?'\"[]{}")
+        if url:
+            urls.append(url)
+    return urls
 
 
 def resolve_short_link(url: str, timeout: int) -> str:
@@ -247,9 +285,124 @@ def _dedupe_urls(urls: list[str]) -> list[str]:
     return unique
 
 
+def find_browser() -> Optional[str]:
+    """Return the path to an installed Chromium-based browser, if any."""
+    for candidate in BROWSER_CANDIDATES:
+        if os.path.isabs(candidate):
+            if os.path.exists(candidate):
+                return candidate
+        else:
+            found = shutil.which(candidate)
+            if found:
+                return found
+    return None
+
+
+def render_page_with_browser(url: str, timeout: int) -> str:
+    """Render a page with headless Chrome/Chromium and return the DOM.
+
+    Douyin now fetches note image data client-side via a signed API, so the
+    share page's HTML no longer contains the image list. Rendering the page
+    with a real browser executes that JS and exposes the image URLs in the
+    resulting DOM.
+    """
+    browser = find_browser()
+    if not browser:
+        raise RuntimeError(
+            "No Chromium-based browser found (Chrome/Edge/Chromium). "
+            "Rendering the Douyin page requires one. Install Chrome and retry, "
+            "or pass --no-browser to skip the browser fallback."
+        )
+
+    profile_dir = tempfile.mkdtemp(prefix="douyin_browser_")
+    # Chrome's --timeout forces --dump-dom to fire after this many ms. Without
+    # it the dump can fire before the async, client-side image request finishes
+    # and the image <img> tags have been rendered. The page keeps background
+    # connections open afterwards, so we still rely on the subprocess timeout.
+    render_ms = 25000
+    cmd = [
+        browser,
+        "--headless=new",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-extensions",
+        "--mute-audio",
+        "--run-all-compositor-stages-before-draw",
+        f"--timeout={render_ms}",
+        f"--user-data-dir={profile_dir}",
+        "--dump-dom",
+        url,
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=render_ms // 1000 + 5,
+        )
+        raw = proc.stdout
+    except subprocess.TimeoutExpired as exc:
+        raw = exc.stdout or b""
+    finally:
+        shutil.rmtree(profile_dir, ignore_errors=True)
+
+    html_out = raw.decode("utf-8", "ignore")
+    if not html_out.strip():
+        raise RuntimeError("The browser did not return any page content.")
+    return html_out
+
+
+def _dom_image_key(url: str) -> str:
+    """Return a stable key identifying a Douyin image object across variants."""
+    parsed = urlparse(url)
+    match = re.search(r"/([^/]+?)(?:~tplv-|$)", parsed.path)
+    return match.group(1) if match else parsed.path
+
+
+def extract_image_urls_from_dom(dom: str) -> list[str]:
+    """Extract note image URLs from a browser-rendered Douyin page."""
+    # Prefer <img src> (the JPEG display image) over <source srcset> variants,
+    # and keep the two collections in order so JPEG wins during dedup.
+    srcs: list[str] = []
+    for match in re.finditer(r'src="([^"]+)"', dom):
+        srcs.append(html.unescape(match.group(1)))
+    srcsets: list[str] = []
+    for match in re.finditer(r'srcset="([^"]+)"', dom):
+        for part in match.group(1).split(","):
+            token = part.strip().split()[0]
+            if token:
+                srcsets.append(html.unescape(token))
+
+    seen: set[str] = set()
+    urls: list[str] = []
+    for candidate in srcs + srcsets:
+        if not _is_image_url(candidate):
+            continue
+        # Note content images use the aweme-images template; skip watermarked
+        # and cover variants.
+        if "aweme-images" not in candidate:
+            continue
+        key = _dom_image_key(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        # Keep the URL as-is (still URL-encoded). Decoding %2B/%3D turns the
+        # CDN signature into characters the server then mis-parses as spaces,
+        # which makes the request fail with 403.
+        urls.append(candidate)
+    return urls
+
+
 def clean_image_url(url: str, original: bool) -> str:
     """Remove signature/query parameters from a Douyin image URL."""
     if not original:
+        return url
+    # Signed CDN URLs (x-signature) must not be stripped: removing the query
+    # string invalidates the signature and the CDN rejects the request.
+    if "x-signature" in url.lower():
         return url
     if any(domain in url.lower() for domain in IMAGE_DOMAINS) and "?" in url:
         url = url.split("?")[0]
@@ -354,21 +507,45 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    # 7. Parse router data and extract images.
+    # 7. Parse router data and extract images from the SSR HTML.
+    image_urls: list[str] = []
     try:
         router_data = parse_router_data(html)
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
-    try:
         image_urls = extract_image_urls(router_data)
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        print(f"Note: {exc}", file=sys.stderr)
+
+    # 8. Fall back to rendering the page with a headless browser. Douyin now
+    #    loads note images via a signed client-side API, so the raw HTML often
+    #    no longer contains them. Rendering can intermittently come back empty
+    #    (anti-bot verification / a slow image request), so retry a few times.
+    if not image_urls:
+        if args.no_browser:
+            print(
+                "Error: No images found in the page HTML and --no-browser is set.",
+                file=sys.stderr,
+            )
+            return 1
+        for attempt in range(1, 4):
+            print(
+                f"Rendering the page with a headless browser "
+                f"(attempt {attempt}/3)..."
+            )
+            try:
+                rendered = render_page_with_browser(share_url, args.timeout)
+            except RuntimeError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 1
+            image_urls = extract_image_urls_from_dom(rendered)
+            if image_urls:
+                break
 
     if not image_urls:
-        print("Warning: No images found in the work.", file=sys.stderr)
+        print(
+            "Warning: No images found in the work. Douyin may be showing a "
+            "verification page or rate-limiting this network; try again later.",
+            file=sys.stderr,
+        )
         return 1
 
     print(f"Found {len(image_urls)} image(s).")
